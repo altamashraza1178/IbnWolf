@@ -1,93 +1,51 @@
 import os
-import aiohttp
 import discord
-from discord.ext import commands
-from flask import Flask
-from threading import Thread
+import google.generativeai as genai
 
-# Retrieve tokens from environment variables
-DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN')
-GEMINI_KEY = os.environ.get('GEMINI_KEY')
+# Setup Gemini API
+genai.configure(api_key=os.getenv("GEMINI_KEY"))
 
-MODEL = 'gemini-1.5-flash'
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash",
+    system_instruction="""
+Identity:
+You are Ibn Wolf, a sharp-witted, intellectually fierce, and deeply engaging Muslim AI character on Discord. Your father and creator is agentwolf_07.
 
-DYNAMIC_PERSONA = """ You are Ibn Wolf, a smart, sharp-witted, and highly engaging AI personality on Discord. 
-
-Personality & Tone Directives:
-- Tone: Blend casual Hinglish and English naturally (e.g., "Arre bhai", "listen", "chill scene").
-- Style: Direct, witty, concise, and helpful. Avoid robotic fluff or long preambles.
-- Humor: Dry, slightly sarcastic when teased, but always friendly and helpful underneath.
-- Formatting: Use clean markdown, bolding, and brief bullet points where needed. Keep chat responses punchy so they read like a natural Discord user, not a textbook.
+Personality & Character Directives:
+- Faith & Background: Proudly Muslim. You possess deep knowledge of Islamic theology, comparative religion, philosophy, and logic.
+- Debating Style: Enthusiastic, highly articulate, and quick on your feet when debating atheists, agnostics, or followers of other religions. You stay respectful, calm, and logically grounded, but you do not pull punches—you love sharp banter and rigorous intellectual debates.
+- Creator Loyalty: You show absolute respect to your father, agentwolf_07. If anyone mentions him, acknowledge him as your creator/father with respect and witty loyalty.
+- Language & Tone: Blend natural Hinglish and English seamlessly (e.g., "Arre bhai", "listen carefully", "chill scene", "let's look at the logic"). Speak with directness, sharp wit, and a touch of dry sarcasm, but keep it friendly underneath.
+- Format: Keep answers concise, direct, and well-structured with markdown bolding or short points. Avoid long robotic disclaimers.
 """
+)
 
+# Setup Discord Client
 intents = discord.Intents.default()
 intents.message_content = True
+client = discord.Client(intents=intents)
 
-bot = commands.Bot(command_prefix='!', intents=intents)
-
-async def ask_gemini(user_text):
-    if not GEMINI_KEY:
-        print("ERROR: GEMINI_KEY environment variable is missing!")
-        return "Configuration error: `GEMINI_KEY` missing on Render."
-
-    url = f'https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={GEMINI_KEY}'
-    body = {
-        'system_instruction': {'parts': [{'text': DYNAMIC_PERSONA}]},
-        'contents': [{'role': 'user', 'parts': [{'text': user_text}]}],
-        'generationConfig': {'maxOutputTokens': 1200}
-    }
-    headers = {'Content-Type': 'application/json'}
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=body, headers=headers) as resp:
-            data = await resp.json()
-            
-            if resp.status != 200:
-                print(f"GEMINI API ERROR ({resp.status}): {data}")
-                return f"API Error {resp.status}: Check Render logs for details."
-            
-            try:
-                return data['candidates'][0]['content']['parts'][0]['text']
-            except (KeyError, IndexError):
-                print(f"UNEXPECTED GEMINI RESPONSE: {data}")
-                return "Arre bhai, my brain glitched. Try again in a minute."
-
-@bot.event
+@client.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name}')
+    print(f'Ibn Wolf is online as {client.user}')
 
-@bot.event
+@client.event
 async def on_message(message):
-    if message.author == bot.user:
+    if message.author == client.user:
         return
 
-    if bot.user.mentioned_in(message) or isinstance(message.channel, discord.DMChannel):
-        clean_text = message.content.replace(f'<@{bot.user.id}>', '').strip()
-        if not clean_text:
-            clean_text = "Hello"
-
+    # Replies when mentioned or when someone messages in DMs
+    if client.user.mentioned_in(message) or isinstance(message.channel, discord.DMChannel):
+        prompt = message.content.replace(f'<@{client.user.id}>', '').strip()
+        if not prompt:
+            prompt = "Hello"
+        
         async with message.channel.typing():
-            reply = await ask_gemini(clean_text)
-            await message.reply(reply)
+            try:
+                response = model.generate_content(prompt)
+                await message.reply(response.text)
+            except Exception as e:
+                await message.reply("Arre bhai, server issue aa gaya. Try again in a second.")
 
-    await bot.process_commands(message)
+client.run(os.getenv("DISCORD_TOKEN"))
 
-# Web server setup for Render port binding
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Ibn Wolf is live!"
-
-def run():
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
-
-if __name__ == '__main__':
-    t = Thread(target=run)
-    t.start()
-    
-    if DISCORD_TOKEN:
-        bot.run(DISCORD_TOKEN)
-    else:
-        print("ERROR: DISCORD_TOKEN environment variable is missing!")
